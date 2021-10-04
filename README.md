@@ -1,1 +1,1 @@
-# mnist__pytorch
+# mnist_pytorch
