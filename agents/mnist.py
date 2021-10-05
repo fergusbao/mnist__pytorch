@@ -54,6 +54,11 @@ class MnistAgent(BaseAgent):
         self.train_loss = 0
         self.test_loss = 0
 
+        # early stopping
+        self.last_loss = 1e2
+        self.patience = 2
+        self.trigger_times = 0
+
         # set cuda flag
         self.is_cuda = torch.cuda.is_available()
         if self.is_cuda and not self.config.cuda:
@@ -106,6 +111,24 @@ class MnistAgent(BaseAgent):
         """
         pass
 
+    def early_stopping(self):
+        """
+        Early Stopping
+        source: https://clay-atlas.com/us/blog/2021/08/25/pytorch-en-early-stopping/
+        return: boolian
+        """
+        if self.test_loss > self.last_loss:
+            self.trigger_times += 1
+
+            if self.trigger_times >= self.patience:
+                print('Early stopping!\nStart to test process.')
+                return True
+                # return/save model
+        else:
+            self.trigger_times = 0
+        self.last_loss = self.test_loss
+        return False
+
     def run(self):
         """
         The main operator
@@ -126,7 +149,16 @@ class MnistAgent(BaseAgent):
             self.train_one_epoch()
             self.validate()
 
+            # Write Info to TensorBoard
+            if self.current_epoch % self.config.log_interval == 0:
+                self.summary_writer.flush()
+
             self.current_epoch += 1
+
+            if self.early_stopping():
+                break
+
+            
 
     def train_one_epoch(self):
         """
