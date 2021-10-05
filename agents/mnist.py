@@ -2,6 +2,8 @@
 Mnist Main agent, as mentioned in the tutorial
 """
 import os
+import copy
+from copy import deepcopy
 import numpy as np
 
 from tqdm import tqdm
@@ -36,6 +38,7 @@ class MnistAgent(BaseAgent):
 
         # define models
         self.model = Mnist()
+        self.best_model_state = None
 
         # define data_loader
         self.data_loader = MnistDataLoader(config=config)
@@ -45,10 +48,12 @@ class MnistAgent(BaseAgent):
 
         # define optimizer
         self.optimizer = optim.SGD(self.model.parameters(), lr=self.config.learning_rate, momentum=self.config.momentum)
+        self.best_optimizer_state = None
 
         # initialize counter
         self.current_epoch = 0
         self.current_iteration = 0
+        self.best_epoch = 0
         self.best_metric = 0
 
         # initialize loss
@@ -104,9 +109,11 @@ class MnistAgent(BaseAgent):
         :return:
         """
         try:
-            self.model.load_state_dict(torch.load(file_name))
+            checkpoint = torch.load(file_name)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         except FileNotFoundError:
-            print('Checkpoint not found!\nStart from scratch')
+            print('Checkpoint not found!\nStart from scratch\n')
 
     def save_checkpoint(self, file_name="checkpoint.pth.tar", is_best=0):
         """
@@ -116,8 +123,12 @@ class MnistAgent(BaseAgent):
         :return:
         """ 
         if is_best:
-            torch.save(self.model.state_dict(), file_name)
-            self.best_loss = self.test_loss
+            torch.save({
+                'epoch':self.best_epoch,
+                'model_state_dict': self.best_model_state,
+                'optimizer_state_dict': self.best_optimizer_state,
+                'loss': self.best_loss,
+                }, file_name)
 
     def early_stopping(self):
         """
@@ -143,7 +154,6 @@ class MnistAgent(BaseAgent):
         """
         try:
             self.train()
-
         except KeyboardInterrupt:
             self.logger.info("You have entered CTRL+C.. Wait to finalize")
 
@@ -152,20 +162,32 @@ class MnistAgent(BaseAgent):
         Main training loop
         :return:
         """
+        is_best = False
         for epoch in range(1, self.config.max_epoch + 1):
-            # Write Info to TensorBoard
-            if self.current_epoch % self.config.log_interval == 0:
-                self.summary_writer.flush()
-
             self.train_one_epoch()
             self.validate()
-            self.current_epoch += 1
-
-            if self.current_epoch > 10 and self.test_loss < self.best_loss:
-                self.save_checkpoint(self.checkpoint_file, True)
+            
+            if self.test_loss < self.best_loss:
+                is_best = True
+                self.best_model_state = copy.deepcopy(self.model.state_dict())
+                self.best_optimizer_state = copy.deepcopy(self.optimizer.state_dict())
+                self.best_loss = self.test_loss
+                self.best_epoch = self.current_epoch
+                
+            # Save the current best checkpoint every log_interval epochs
+            # Write Info to TensorBoard every log_interval epochs
+            if self.current_epoch % self.config.log_interval == 0:
+                self.save_checkpoint(self.checkpoint_file, is_best)
+                self.summary_writer.flush()
+                is_best = False
 
             if self.early_stopping():
                 break
+
+            self.current_epoch += 1
+        
+        # Save the best checkpoint every log_interval epochs
+        self.save_checkpoint(self.checkpoint_file, is_best)
 
     def train_one_epoch(self):
         """
