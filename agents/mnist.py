@@ -14,6 +14,8 @@ from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
 
+import torchvision
+
 from agents.base import BaseAgent
 
 from graphs.models.mnist import Mnist
@@ -48,6 +50,10 @@ class MnistAgent(BaseAgent):
         self.current_iteration = 0
         self.best_metric = 0
 
+        # initialize loss
+        self.train_loss = 0
+        self.test_loss = 0
+
         # set cuda flag
         self.is_cuda = torch.cuda.is_available()
         if self.is_cuda and not self.config.cuda:
@@ -74,7 +80,14 @@ class MnistAgent(BaseAgent):
         # Model Loading from the latest checkpoint if not found start from scratch.
         self.load_checkpoint(self.config.checkpoint_file)
         # Summary Writer
-        self.summary_writer = None
+        self.summary_writer = SummaryWriter(self.config.log_dir)
+
+        # Add Graph(Model)
+        data, target = next(iter(self.data_loader.train_loader))
+        data = data.to(self.device)
+        grid = torchvision.utils.make_grid(data)
+        self.summary_writer.add_image('images', grid, 0)
+        self.summary_writer.add_graph(self.model, data)
 
     def load_checkpoint(self, file_name):
         """
@@ -114,13 +127,15 @@ class MnistAgent(BaseAgent):
             self.validate()
 
             self.current_epoch += 1
+
     def train_one_epoch(self):
         """
         One epoch of training
         :return:
         """
-
         self.model.train()
+        self.train_loss = 0
+        correct = 0
         for batch_idx, (data, target) in enumerate(self.data_loader.train_loader):
             data, target = data.to(self.device), target.to(self.device)
             self.optimizer.zero_grad()
@@ -133,6 +148,11 @@ class MnistAgent(BaseAgent):
                     self.current_epoch, batch_idx * len(data), len(self.data_loader.train_loader.dataset),
                            100. * batch_idx / len(self.data_loader.train_loader), loss.item()))
             self.current_iteration += 1
+            self.train_loss += loss.item()
+        
+        self.train_loss /= len(self.data_loader.train_loader.dataset)
+        self.logger.info('\nTrain set: Average loss: {:.4f}\n'.format(self.train_loss))
+        self.summary_writer.add_scalar('Loss/train', self.train_loss, self.current_epoch+1)
 
     def validate(self):
         """
@@ -140,23 +160,30 @@ class MnistAgent(BaseAgent):
         :return:
         """
         self.model.eval()
-        test_loss = 0
+        self.test_loss = 0
         correct = 0
         with torch.no_grad():
             for data, target in self.data_loader.test_loader:
                 data, target = data.to(self.device), target.to(self.device)
                 output = self.model(data)
-                test_loss += F.nll_loss(output, target, size_average=False).item()  # sum up batch loss
+                self.test_loss += F.nll_loss(output, target, size_average=False).item()  # sum up batch loss
                 pred = output.max(1, keepdim=True)[1]  # get the index of the max log-probability
                 correct += pred.eq(target.view_as(pred)).sum().item()
 
-        test_loss /= len(self.data_loader.test_loader.dataset)
+        self.test_loss /= len(self.data_loader.test_loader.dataset)
         self.logger.info('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-            test_loss, correct, len(self.data_loader.test_loader.dataset),
+            self.test_loss, correct, len(self.data_loader.test_loader.dataset),
             100. * correct / len(self.data_loader.test_loader.dataset)))
+        self.summary_writer.add_scalar('Loss/test', self.test_loss, self.current_epoch+1)
+
     def finalize(self):
         """
         Finalizes all the operations of the 2 Main classes of the process, the operator and the data loader
         :return:
         """
-        pass
+        # log hparams in tensorboard
+        # hparams = ['batch_size', 'test_batch_size', 'learning_rate']
+
+        # self.summary_writer.add_hparams({k:v for k,v in self.config.items() if k in hparams},
+        #                                 {'hparam/accuracy': self.train_loss, 'hparam/loss': self.test_loss})
+        self.summary_writer.close()
