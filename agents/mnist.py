@@ -1,6 +1,7 @@
 """
 Mnist Main agent, as mentioned in the tutorial
 """
+import os
 import numpy as np
 
 from tqdm import tqdm
@@ -53,6 +54,7 @@ class MnistAgent(BaseAgent):
         # initialize loss
         self.train_loss = 0
         self.test_loss = 0
+        self.best_loss = 1e2
 
         # early stopping
         self.last_loss = 1e2
@@ -83,7 +85,8 @@ class MnistAgent(BaseAgent):
             self.logger.info("Program will run on *****CPU*****\n")
 
         # Model Loading from the latest checkpoint if not found start from scratch.
-        self.load_checkpoint(self.config.checkpoint_file)
+        self.checkpoint_file = os.path.join(self.config.checkpoint_dir, self.config.checkpoint_file)
+        self.load_checkpoint(self.checkpoint_file)
         # Summary Writer
         self.summary_writer = SummaryWriter(self.config.log_dir)
 
@@ -100,7 +103,10 @@ class MnistAgent(BaseAgent):
         :param file_name: name of the checkpoint file
         :return:
         """
-        pass
+        try:
+            self.model.load_state_dict(torch.load(file_name))
+        except FileNotFoundError:
+            print('Checkpoint not found!\nStart from scratch')
 
     def save_checkpoint(self, file_name="checkpoint.pth.tar", is_best=0):
         """
@@ -108,8 +114,10 @@ class MnistAgent(BaseAgent):
         :param file_name: name of the checkpoint file
         :param is_best: boolean flag to indicate whether current checkpoint's accuracy is the best so far
         :return:
-        """
-        pass
+        """ 
+        if is_best:
+            torch.save(self.model.state_dict(), file_name)
+            self.best_loss = self.test_loss
 
     def early_stopping(self):
         """
@@ -123,7 +131,6 @@ class MnistAgent(BaseAgent):
             if self.trigger_times >= self.patience:
                 print('Early stopping!\nStart to test process.')
                 return True
-                # return/save model
         else:
             self.trigger_times = 0
         self.last_loss = self.test_loss
@@ -146,19 +153,19 @@ class MnistAgent(BaseAgent):
         :return:
         """
         for epoch in range(1, self.config.max_epoch + 1):
-            self.train_one_epoch()
-            self.validate()
-
             # Write Info to TensorBoard
             if self.current_epoch % self.config.log_interval == 0:
                 self.summary_writer.flush()
 
+            self.train_one_epoch()
+            self.validate()
             self.current_epoch += 1
+
+            if self.current_epoch > 10 and self.test_loss < self.best_loss:
+                self.save_checkpoint(self.checkpoint_file, True)
 
             if self.early_stopping():
                 break
-
-            
 
     def train_one_epoch(self):
         """
@@ -198,7 +205,7 @@ class MnistAgent(BaseAgent):
             for data, target in self.data_loader.test_loader:
                 data, target = data.to(self.device), target.to(self.device)
                 output = self.model(data)
-                self.test_loss += F.nll_loss(output, target, size_average=False).item()  # sum up batch loss
+                self.test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
                 pred = output.max(1, keepdim=True)[1]  # get the index of the max log-probability
                 correct += pred.eq(target.view_as(pred)).sum().item()
 
