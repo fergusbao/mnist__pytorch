@@ -62,7 +62,6 @@ class MnistAgent(BaseAgent):
         self.best_loss = 1e2
 
         # early stopping
-        self.last_loss = 1e2
         self.patience = 2
         self.trigger_times = 0
 
@@ -136,7 +135,7 @@ class MnistAgent(BaseAgent):
         source: https://clay-atlas.com/us/blog/2021/08/25/pytorch-en-early-stopping/
         return: boolian
         """
-        if self.test_loss > self.last_loss:
+        if self.test_loss >= self.best_loss:
             self.trigger_times += 1
 
             if self.trigger_times >= self.patience:
@@ -144,8 +143,8 @@ class MnistAgent(BaseAgent):
                 return True
         else:
             self.trigger_times = 0
-        self.last_loss = self.test_loss
-        return False
+            self.best_loss = self.test_loss
+            return False
 
     def run(self):
         """
